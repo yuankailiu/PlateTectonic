@@ -463,12 +463,142 @@ class Plate(object):
             #   (https://github.com/matplotlib/matplotlib/issues/5888)
             #q = ax.quiver(lons_inplate, lats_inplate, inplate_ve, inplate_vn,transform = ccrs.PlateCarree(),scale=scale,width=0.004,color='g',regrid_shape=20)
             q = ax.quiver(lons_inplate, lats_inplate, inplate_ve/np.cos(lats_inplate / 180 * np.pi), inplate_vn, transform=ccrs.PlateCarree(), scale=scale, width=0.004, color='g', regrid_shape=20, angles="xy")
-            ax.quiverkey(q, X=0.65, Y=0.85, U=U,label=r'$20 \, mm/yr$', labelpos='E',coordinates='figure',fontproperties=font0)
+            ax.quiverkey(q, X=0.65, Y=0.85, U=U,label=r'${} \, mm/yr$'.format(U), labelpos='E',coordinates='figure',fontproperties=font0)
 
         if figname is None:
             plt.show()
         else:
             plt.savefig(figname)
+
+
+    ## Yuan-Kai Liu, May 2022: refine this function to make a minimalist-style basemap of the plate/region
+    def plot_basemap(self, figname=None, zoom=1e-6, scale=800, U=50, **kwargs):
+        if 'c_ocean'     not in kwargs.keys():   kwargs['c_ocean']       = 'w'
+        if 'c_land'      not in kwargs.keys():   kwargs['c_land']        = 'lightgray'
+        if 'c_plate'     not in kwargs.keys():   kwargs['c_plate']       = 'mistyrose'
+        if 'lw_coast'    not in kwargs.keys():   kwargs['lw_coast']      = 0.5
+        if 'lw_pbond'    not in kwargs.keys():   kwargs['lw_pbond']      = 1
+        if 'lc_pbond'    not in kwargs.keys():   kwargs['lc_pbond']      = 'coral'
+        if 'alpha_plate' not in kwargs.keys():   kwargs['alpha_plate']   = 0.4
+        if 'grid_ls'     not in kwargs.keys():   kwargs['grid_ls']       = '--'
+        if 'grid_lw'     not in kwargs.keys():   kwargs['grid_lw']       = 0.3
+        if 'grid_lc'     not in kwargs.keys():   kwargs['grid_lc']       = 'gray'
+        if 'Nqgrid'      not in kwargs.keys():   kwargs['Nqgrid']        = 10
+        if 'regrid_shp'  not in kwargs.keys():   kwargs['regrid_shp']    = 10
+        if 'legend'      not in kwargs.keys():   kwargs['legend']        = True
+        if 'pts'         not in kwargs.keys():   kwargs['pts']           = None
+        if 'pts_marker'  not in kwargs.keys():   kwargs['pts_marker']    = '^'
+        if 'pts_ms'      not in kwargs.keys():   kwargs['pts_ms']        = 20
+        if 'pts_mfc'     not in kwargs.keys():   kwargs['pts_mfc']       = 'r'
+        if 'pts_mec'     not in kwargs.keys():   kwargs['pts_mec']       = 'k'
+        if 'pts_mew'     not in kwargs.keys():   kwargs['pts_mew']       = 2
+
+        lats_bnds = self.polygon.lats
+        lons_bnds = self.polygon.lons
+        centroid_lat, centroid_lon = self.centroid[:2]
+        print(centroid_lat, centroid_lon)
+
+        # plot points with markers (if given only one point, center the plot at there)
+        if kwargs['pts']:
+            pts = np.array(kwargs['pts'])
+            if len(pts.shape) == 2:
+                xs, ys = pts[:,0], pts[:,1]
+            elif len(pts.shape) == 1:
+                xs, ys = pts[0], pts[1]
+                centroid_lon, centroid_lat = pts[0]*u.deg, pts[1]*u.deg
+                print('Center the globe at:', centroid_lat, centroid_lon)
+
+        fig = plt.figure(dpi=200)
+        ax = fig.add_subplot(1, 1, 1, projection=ccrs.NearsidePerspective(centroid_lon, centroid_lat, satellite_height=6.5e7/zoom))
+
+        ax.set_global()
+        # set the gridlines
+        ax.gridlines(color=kwargs['grid_lc'], linestyle=kwargs['grid_ls'], xlocs = np.arange(-180,180,30), ylocs = np.linspace(-80,80,9), linewidth=kwargs['grid_lw'])
+
+        ax.add_feature(cfeature.OCEAN, color=kwargs['c_ocean'])
+        ax.add_feature(cfeature.LAND,  color=kwargs['c_land'], zorder=0)
+        ax.add_feature(cfeature.COASTLINE, linewidth=kwargs['lw_coast'])
+
+        ax.plot(lons_bnds, lats_bnds, color=kwargs['lc_pbond'], transform=ccrs.Geodetic(), linewidth=kwargs['lw_pbond'])
+        ax.fill(lons_bnds, lats_bnds, color=kwargs['c_plate'],  transform=ccrs.Geodetic(), alpha=kwargs['alpha_plate'])
+
+        if 'omega_cartesian' in self.info:
+
+            lons_bnds_min,lons_bnds_max = lons_bnds.min(),lons_bnds.max()
+            lats_bnds_min,lats_bnds_max = lats_bnds.min(),lats_bnds.max()
+
+            cross180 = False
+            if np.abs(lons_bnds_min - lons_bnds_max) > 355:
+                if self.contains_points([89,0]): # North pole
+                    print('Near North pole')
+                    lats_bnds_max = 85
+                elif self.contains_points([-89,0]): # South pole
+                    print('Near South pole')
+                    lats_bnds_min = -85
+
+                else:
+                    print('Crossing the 180/-180 longitude')
+                    cross180 = True
+                    lons_bnds_min = np.min(lons_bnds[lons_bnds>0])
+                    lons_bnds_max = np.max(lons_bnds[lons_bnds<0])
+                    shift180 = -180 - lons_bnds_max
+                    lons_bnds_min  = (lons_bnds_min + shift180)%360
+                    lons_bnds_max  = (lons_bnds_max + shift180)%360
+
+            print('LATS bound min/max', lats_bnds_min, lats_bnds_max)
+            print('LONS bound min/max', lons_bnds_min, lons_bnds_max)
+
+            lats_fill = np.linspace(lats_bnds_min,lats_bnds_max,10)
+            lons_fill = np.linspace(lons_bnds_min,lons_bnds_max,10)
+
+            if cross180:
+                lons_fill = (lons_fill - shift180)
+                lons_fill[lons_fill>180] = 180 - lons_fill[lons_fill>180]
+
+            lons_mesh, lats_mesh = np.meshgrid(lons_fill,lats_fill)
+            lons_flat = lons_mesh.flatten()
+            lats_flat = lats_mesh.flatten()
+
+            inplate_flag = self.contains_points(np.array([lats_flat,lons_flat]).T)
+            print('Contains {}/{} point in plate'.format(np.sum(inplate_flag), len(lons_flat)))
+
+            lons_inplate = lons_flat[inplate_flag]
+            lats_inplate = lats_flat[inplate_flag]
+            h_inplate = np.zeros_like(lats_inplate)*u.m
+
+            locations = [lats_inplate*u.deg,lons_inplate*u.deg,h_inplate]
+            inplate_vel_en = self.velocity_at(locations,'geodetic').en
+            inplate_ve,inplate_vn = inplate_vel_en[:,0],inplate_vel_en[:,1]
+
+            font0 = FontProperties()
+            font0.set_size('small')
+
+            # TODO: Check this is correct
+            # mute the original quiver plotting. Use the slightly different angles to handle weirdness in polar regions.
+            # Related issues:
+            #   (https://github.com/SciTools/cartopy/issues/1179)
+            #   (https://github.com/matplotlib/matplotlib/issues/5888)
+            #q = ax.quiver(lons_inplate, lats_inplate, inplate_ve, inplate_vn,transform = ccrs.PlateCarree(),scale=scale,width=0.004,color='g',regrid_shape=20)
+            Xs = lons_inplate
+            Ys = lats_inplate
+            Us = inplate_ve/np.cos(lats_inplate / 180 * np.pi)
+            Vs = inplate_vn
+
+            q = ax.quiver(Xs, Ys, Us, Vs, transform=ccrs.PlateCarree(), scale=scale, width=.0075, color='coral', regrid_shape=kwargs['regrid_shp'], angles="xy", zorder=10)
+
+            if kwargs['legend']:
+                # put an empty title to increase the whilespace at the top for quiver key
+                ax.set_title('  ', pad=10)
+                ax.quiverkey(q, X=0.3, Y=0.95, U=U,label=r'${} \, mm/yr$'.format(U), labelpos='E',coordinates='figure',fontproperties=font0)
+
+            # plot points with markers
+            if kwargs['pts']:
+                ax.scatter(xs, ys, marker=kwargs['pts_marker'], s=kwargs['pts_ms'], c=kwargs['pts_mfc'], edgecolors=kwargs['pts_mec'], linewidths=kwargs['pts_mew'], zorder=5)
+
+        if figname is None:
+            plt.show()
+        else:
+            plt.savefig(figname, transparent=True, dpi=200, bbox_inches='tight')
 
 
 class PlateMotion(object):
